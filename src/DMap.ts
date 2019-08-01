@@ -19,6 +19,8 @@ export default class DMap<K extends IndexableType, V> {
     private valueTableCount: number
     private valueTablePointer: number
 
+    private allTables: Dexie.Table<any, string>[]
+
     constructor(config: DMapConfig<V>) {
         // super()
 
@@ -54,6 +56,14 @@ export default class DMap<K extends IndexableType, V> {
 
         this.valueTableCount = 4
         this.valueTablePointer = 0
+
+        this.allTables = [
+            this.db.table('key'),
+            this.db.table('value'),
+            this.db.table('value1'),
+            this.db.table('value2'),
+            this.db.table('value3'),
+        ]
     }
 
     /**
@@ -67,7 +77,7 @@ export default class DMap<K extends IndexableType, V> {
 
         const fragments = this.config.split(value)
 
-        await this.db.transaction('rw', [this.keyTable, this.valueTable], async () => {
+        await this.db.transaction('rw', this.allTables, async () => {
             // 避免键冲突
 
             const collection = await this.keyTable.where('key').equals(key)
@@ -79,13 +89,20 @@ export default class DMap<K extends IndexableType, V> {
             }
 
             // 写入新数据
+            const promises = []
             const frags = []
             for (let i = 0; i < fragments.length; i++) {
                 const data = fragments[i]
                 const fragID = `${key}-${i}`
-                frags.push([fragID])
-                await this.valueTable.add({ fragID, data })
+                frags.push([this.valueTablePointer, fragID])
+                promises.push(this.valueTables[this.valueTablePointer].add({ fragID, data }))
+                this.valueTablePointer++
+                if (this.valueTablePointer >= this.valueTableCount) {
+                    this.valueTablePointer = 0
+                }
             }
+
+            await Dexie.Promise.all(promises)
 
             // 写入key
 
@@ -100,7 +117,7 @@ export default class DMap<K extends IndexableType, V> {
      * @param key
      */
     async delete(key: K): Promise<boolean> {
-        return await this.db.transaction('rw', [this.keyTable, this.valueTable], async () => {
+        return await this.db.transaction('rw', this.allTables, async () => {
             const collection = await this.keyTable.where('key').equals(key)
 
             const curr = await collection.first()
@@ -110,20 +127,29 @@ export default class DMap<K extends IndexableType, V> {
                 return false
             }
 
-            // 删除value
-            // const values = this.valueTable.where
-            // await Dexie.Promise.all(
-            //     curr.frags.map(fragID => this.valueTable.delete({ fragID: fragID }))
-            // )
-            // await this.valueTable.bulkDelete(
-            //     curr.frags.map(fragID => {
-            //         return { fragID }
-            //     })
-            // )
-            await this.valueTable
-                .where('fragID')
-                .anyOf(curr.frags)
-                .delete()
+            const frags = []
+            curr.frags.forEach(([pointer, fragID]) => {
+                if (!frags[pointer]) {
+                    frags[pointer] = []
+                }
+
+                frags[pointer].push(fragID)
+            })
+
+            const promises = []
+            for (let pointer = 0; pointer < frags.length; pointer++) {
+                const fragIDs = frags[pointer]
+                if (fragIDs) {
+                    promises.push(
+                        this.valueTables[pointer]
+                            .where('fragID')
+                            .anyOf(fragIDs)
+                            .delete()
+                    )
+                }
+            }
+
+            await Dexie.Promise.all(promises)
 
             // 删除key
             await collection.delete()
@@ -133,7 +159,7 @@ export default class DMap<K extends IndexableType, V> {
     }
 
     async get(key: K): Promise<V> {
-        const frags = await this.db.transaction('r', [this.keyTable, this.valueTable], async () => {
+        const frags = await this.db.transaction('r', this.allTables, async () => {
             const collection = await this.keyTable.where('key').equals(key)
 
             const objs = await collection.toArray()
@@ -146,11 +172,22 @@ export default class DMap<K extends IndexableType, V> {
             } else {
                 const fragIDs = objs[0].frags
                 const frags = []
+                const promises = []
+
                 for (let i = 0; i < fragIDs.length; i++) {
-                    const objs = await this.valueTable
-                        .where('fragID')
-                        .equals(fragIDs[i])
-                        .toArray()
+                    promises.push(
+                        this.valueTables[fragIDs[i][0]]
+                            .where('fragID')
+                            .equals(fragIDs[i][1])
+                            .toArray()
+                    )
+                }
+
+                const objss = await Dexie.Promise.all(promises)
+
+                for (let i = 0; i < fragIDs.length; i++) {
+                    const objs = objss[i]
+
                     if (objs.length === 0) {
                         throw new Error('key not found: ' + key)
                     } else if (objs.length > 1) {
@@ -167,7 +204,10 @@ export default class DMap<K extends IndexableType, V> {
     }
 
     async clear() {
+        for (let i = 0; i < this.valueTableCount; i++) {
+            await this.valueTableCount[i].clear()
+        }
         await this.keyTable.clear()
-        await this.valueTable.clear()
+        // await this.valueTable.clear()
     }
 }
