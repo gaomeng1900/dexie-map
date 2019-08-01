@@ -6,6 +6,116 @@
     </head>
     <body>
         <script src="/static/import.demo.js" charset="utf-8"></script>
-        <script type="text/javascript"></script>
+        <script type="text/javascript">
+            // const d = new DMap({
+            //     name: 'test',
+            // })
+
+            // // basic
+            // ;(async () => {
+            //     const r0 = await d.set('123', { ha: 'lolo' })
+            //     const r1 = await d.get('123')
+            //     console.log(r1)
+            // })()
+
+            // // 事务
+            // ;(async () => {
+            //     const r0 = await d.set('123', { ha: 'haha' })
+            //     for (let i = 0; i < 9; i++) {
+            //         const ran = Math.random()
+            //         console.log(ran)
+            //         d.set('123', { ha: ran })
+            //         ;(async () => {
+            //             console.log(await d.get('123'))
+            //         })()
+            //     }
+            // })()
+
+            // 大文件
+            ;(async () => {
+                const d = new DMap({
+                    name: 'test-large-file',
+                    split: file => {
+                        console.time('split')
+                        const result = []
+                        const frameSize = 1024 * 1024 * 40
+                        const frameCount = Math.ceil(
+                            (file.length * file.BYTES_PER_ELEMENT) / frameSize
+                        )
+
+                        // 用第一个分片放置原数据
+                        result.push({
+                            length: file.length,
+                            frameCount,
+                            frameSize,
+                        })
+
+                        let start = 0
+                        for (let i = 0; i < frameCount; i++) {
+                            // bug in dexie
+                            // frame = file.subarray(
+                            //     start / file.BYTES_PER_ELEMENT,
+                            //     (start + frameSize) / file.BYTES_PER_ELEMENT
+                            // )
+                            frame = file.slice(
+                                start / file.BYTES_PER_ELEMENT,
+                                (start + frameSize) / file.BYTES_PER_ELEMENT
+                            )
+                            result.push(frame)
+                            start += frameSize
+                        }
+                        console.timeEnd('split')
+                        return result
+                    },
+                    join: frames => {
+                        console.time('join')
+                        const meta = frames[0]
+                        console.log(meta)
+                        const file = new frames[1].constructor(meta.length)
+
+                        frames.forEach((frame, index) => {
+                            if (index === 0) return
+                            file.set(frame, ((index - 1) * meta.frameSize) / file.BYTES_PER_ELEMENT)
+                        })
+                        console.timeEnd('join')
+
+                        return file
+                    },
+                })
+
+                // console.time('clear')
+                // await d.clear()
+                // console.timeEnd('clear')
+
+                const file = new Float32Array(1024 * 1024 * 60)
+                for (let i = 0; i < file.length; i++) {
+                    file[i] = Math.random()
+                }
+                console.log(file)
+
+                console.time('set')
+                const r0 = await d.set('123', file)
+                console.timeEnd('set')
+
+                console.time('get')
+                const r1 = await d.get('123')
+                console.timeEnd('get')
+
+                console.log(r1)
+
+                let equal = true
+                if (file.length !== r1.length) {
+                    equal = false
+                }
+                for (let i = 0; i < file.length; i++) {
+                    if (file[i] !== r1[i]) {
+                        equal = false
+                        console.log(i, file[i], r1[i])
+                        break
+                    }
+                }
+                console.log(equal)
+            })()
+        </script>
     </body>
 </html>
