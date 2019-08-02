@@ -7,8 +7,8 @@ assets/tile/*.json
 assets/*.json
 dist/
 
-/v*.js
-/v*.ts
+/*.d.ts
+/DMap.js
 
 *.map
 

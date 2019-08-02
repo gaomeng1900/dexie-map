@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+    <head>
+        <meta charset="utf-8" />
+        <title>接口设计</title>
+    </head>
+    <body>
+        <script src="/static/import.demo.js" charset="utf-8"></script>
+        <script src="https://unpkg.com/dexie@latest/dist/dexie.js"></script>
+        <script type="text/javascript">
+            //
+            // Declare Database
+            //
+            var db = new Dexie('FriendDatabase')
+            db.version(2).stores({
+                friends: '++id,name',
+                value: 'fragID',
+            })
+
+            console.log(db.table('friends'))
+
+            //
+            // Manipulate and Query Database
+            //
+            // db.table("friends")
+            //   .add({
+            //     name: "Josephine",
+            //     data: new Float32Array(1024 * 1024 * 10)
+            //   })
+            //   .then(function() {
+            //     return db.friends
+            //       .where("name")
+            //       .equals("Josephine")
+            //       .last();
+            //     // .raw();
+            //   })
+            //   .then(function(data) {
+            //     console.log(data);
+            //   });
+
+            console.time('count')
+            db.table('value')
+                .count()
+                .then(pKey => {
+                    console.timeEnd('count')
+                    console.time('set')
+                    db.table('value')
+                        .add({
+                            fragID: pKey,
+                            // data: new Float32Array(1024 * 1024 * 30), // 120 MB
+                            data: [new Float32Array(1024 * 1024 * 5)], // 20 MB
+                        })
+                        .then(() => {
+                            console.timeEnd('set')
+                            console.time('get')
+                            return db.table('value').get(pKey)
+                        })
+                        .then(obj => {
+                            console.timeEnd('get')
+                            console.log(obj)
+
+                            // download(obj.data, 'data.bin')
+                        })
+                })
+        </script>
+    </body>
+</html>

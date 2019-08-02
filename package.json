@@ -1,17 +1,19 @@
 {
-  "name": "dexie-map",
+  "name": "db-map",
   "version": "0.0.1",
   "description": "试验",
   "author": "gaomeng1900",
   "email": "gaomeng1900@gmail.com",
-  "main": "index.js",
-  "types": "index.d.ts",
+  "main": "DMap.js",
+  "types": "DMap.d.ts",
   "license": "MIT",
   "files": [
     "package.json",
     "README.md",
-    "index.js",
-    "index.map"
+    "DMap.js",
+    "DMap.d.ts",
+    "DMap.map",
+    "src/*.ts"
   ],
   "dependencies": {
     "dexie": "^2.0.4"

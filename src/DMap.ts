@@ -15,13 +15,7 @@ export default class DMap<K extends IndexableType, V> {
     private keyTable: Dexie.Table<any, string>
     private valueTable: Dexie.Table<any, string>
 
-    private valueTables: Dexie.Table<any, string>[]
-    private valueTableCount: number
-    private valueTablePointer: number
-
     constructor(config: DMapConfig<V>) {
-        // super()
-
         if (!config.name) {
             throw new Error('DMap: config.name is required!')
         }
@@ -35,25 +29,12 @@ export default class DMap<K extends IndexableType, V> {
 
         this.db = new Dexie(this.config.name)
         this.db.version(1).stores({
-            key: '++id,key,frags',
-            value: '++id,fragID,data',
-            value1: '++id,fragID,data',
-            value2: '++id,fragID,data',
-            value3: '++id,fragID,data',
+            key: 'key', // key:string -> fragIDs: fragID[]
+            value: 'fragID', // fragID:string -> any
         })
 
         this.keyTable = this.db.table('key')
         this.valueTable = this.db.table('value')
-
-        this.valueTables = [
-            this.db.table('value'),
-            this.db.table('value1'),
-            this.db.table('value2'),
-            this.db.table('value3'),
-        ]
-
-        this.valueTableCount = 4
-        this.valueTablePointer = 0
     }
 
     /**
@@ -70,8 +51,11 @@ export default class DMap<K extends IndexableType, V> {
         await this.db.transaction('rw', [this.keyTable, this.valueTable], async () => {
             // 避免键冲突
 
-            const collection = await this.keyTable.where('key').equals(key)
-            const obj = await collection.first()
+            // primary key
+            const obj = await this.keyTable
+                .where('key')
+                .equals(key)
+                .first()
 
             if (obj) {
                 console.log('key conflict', key)
@@ -79,17 +63,22 @@ export default class DMap<K extends IndexableType, V> {
             }
 
             // 写入新数据
-            const frags = []
+            const promises = []
+            const fragIDs = []
+            const values = []
             for (let i = 0; i < fragments.length; i++) {
                 const data = fragments[i]
+                // @todo 不应该假设 key 可以表示成字符串，这里应该直接递增
                 const fragID = `${key}-${i}`
-                frags.push([fragID])
-                await this.valueTable.add({ fragID, data })
+                fragIDs.push(fragID)
+                values.push({ fragID, data })
             }
+
+            await this.valueTable.bulkAdd(values)
 
             // 写入key
 
-            await this.keyTable.add({ key, frags })
+            await this.keyTable.add({ key, fragIDs })
         })
 
         return this
@@ -103,27 +92,18 @@ export default class DMap<K extends IndexableType, V> {
         return await this.db.transaction('rw', [this.keyTable, this.valueTable], async () => {
             const collection = await this.keyTable.where('key').equals(key)
 
-            const curr = await collection.first()
+            const obj = await collection.first()
 
-            if (!curr) {
+            if (!obj) {
                 console.log('key not found', key)
                 return false
             }
 
-            // 删除value
-            // const values = this.valueTable.where
-            // await Dexie.Promise.all(
-            //     curr.frags.map(fragID => this.valueTable.delete({ fragID: fragID }))
-            // )
-            // await this.valueTable.bulkDelete(
-            //     curr.frags.map(fragID => {
-            //         return { fragID }
-            //     })
-            // )
-            await this.valueTable
-                .where('fragID')
-                .anyOf(curr.frags)
-                .delete()
+            await this.valueTable.bulkDelete(obj.fragIDs)
+            // await this.valueTable
+            //     .where('fragID')
+            //     .anyOf(obj.fragIDs)
+            //     .delete()
 
             // 删除key
             await collection.delete()
@@ -132,33 +112,45 @@ export default class DMap<K extends IndexableType, V> {
         })
     }
 
+    /**
+     *
+     * @param key
+     */
     async get(key: K): Promise<V> {
         const frags = await this.db.transaction('r', [this.keyTable, this.valueTable], async () => {
-            const collection = await this.keyTable.where('key').equals(key)
+            // 主键理论上不可能冲突
+            const obj = await this.keyTable
+                .where('key')
+                .equals(key)
+                .first()
 
-            const objs = await collection.toArray()
-
-            if (objs.length === 0) {
+            if (!obj) {
                 console.log('key not found', key)
                 return null
-            } else if (objs.length > 1) {
-                throw new Error('DMap: 数据表键冲突')
             } else {
-                const fragIDs = objs[0].frags
+                const fragIDs = obj.fragIDs
                 const frags = []
-                for (let i = 0; i < fragIDs.length; i++) {
-                    const objs = await this.valueTable
-                        .where('fragID')
-                        .equals(fragIDs[i])
-                        .toArray()
-                    if (objs.length === 0) {
-                        throw new Error('key not found: ' + key)
-                    } else if (objs.length > 1) {
-                        throw new Error('DMap: 数据表键冲突')
-                    } else {
-                        frags.push(objs[0].data)
-                    }
+
+                // 找到所有需要的分片
+                const _objs = await this.valueTable
+                    .where('fragID')
+                    .anyOf(fragIDs)
+                    .toArray()
+
+                // 检测分片完整性
+                const objs = _objs.filter(obj => !!obj)
+                if (objs.length < _objs.length) {
+                    console.error('数据段分片不完整，可能是被浏览器清除，或者之前写入是发生崩溃')
+                    return null
                 }
+
+                // 分片排序
+                for (let i = 0; i < fragIDs.length; i++) {
+                    const fragID = fragIDs[i]
+                    const frag = objs.find(value => value.fragID === fragID)
+                    frags.push(frag.data)
+                }
+
                 return frags
             }
         })
@@ -166,8 +158,52 @@ export default class DMap<K extends IndexableType, V> {
         return frags ? this.config.join(frags) : null
     }
 
+    /**
+     *
+     * @param key
+     */
+    async has(key: K) {
+        const obj = await this.keyTable
+            .where('key')
+            .equals(key)
+            .first()
+
+        if (!obj) {
+            console.log('key not found', key)
+            return false
+        } else {
+            return true
+        }
+    }
+
+    /**
+     *
+     */
     async clear() {
         await this.keyTable.clear()
         await this.valueTable.clear()
     }
+
+    /**
+     *
+     */
+    close() {
+        this.db.close()
+    }
+
+    /**
+     *
+     */
+    get size() {
+        return (async () => {
+            return await this.keyTable.count()
+        })()
+    }
+
+    // @todo
+
+    forEach(func) {}
+    entries() {}
+    keys() {}
+    values() {}
 }

@@ -7,6 +7,8 @@
     <body>
         <script src="/static/import.demo.js" charset="utf-8"></script>
         <script type="text/javascript">
+            // setInterval(() => console.log('heart beat❤️'), 50)
+
             // const d = new DMap({
             //     name: 'test',
             // })
@@ -33,12 +35,12 @@
 
             // 大文件
             ;(async () => {
-                const d = new DMap({
+                window.d = new DMap({
                     name: 'test-large-file',
                     split: file => {
                         console.time('split')
                         const result = []
-                        const frameSize = 1024 * 1024 * 40
+                        const frameSize = 1024 * 1024 * 1 // 初步试验发现 分块这个尺寸时存储性能比较高
                         const frameCount = Math.ceil(
                             (file.length * file.BYTES_PER_ELEMENT) / frameSize
                         )
@@ -87,11 +89,13 @@
                 // await d.clear()
                 // console.timeEnd('clear')
 
-                const file = new Float32Array(1024 * 1024 * 60)
+                const file = new Float32Array(1024 * 1024 * 10) // 40MD
+                // const file = new Float32Array(1024 * 1024 * 40) // 160MD
+                // const file = new Float32Array(1024 * 1024 * 100) // 400MD
                 for (let i = 0; i < file.length; i++) {
                     file[i] = Math.random()
                 }
-                console.log(file)
+                // console.log(file)
 
                 console.time('set')
                 const r0 = await d.set('123', file)
@@ -101,7 +105,7 @@
                 const r1 = await d.get('123')
                 console.timeEnd('get')
 
-                console.log(r1)
+                // console.log(r1)
 
                 let equal = true
                 if (file.length !== r1.length) {
